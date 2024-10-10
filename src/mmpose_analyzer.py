@@ -76,7 +76,7 @@ class PosturalAnalyzer():
     def process_video(self, video_path, output_dir="outputs", return_vis=True):
         # Create output directory and subdirectory for video file if it doesn't exist
         video_name = os.path.basename(video_path).replace('.mp4', '')
-        video_output_dir = os.path.join(output_dir,f'{self.inferencer_name}',video_name,)
+        video_output_dir = os.path.join(output_dir, f'{self.inferencer_name}', video_name)
         os.makedirs(video_output_dir, exist_ok=True)  # Ensure all directories are created
 
         video_capture = cv2.VideoCapture(video_path)
@@ -85,9 +85,16 @@ class PosturalAnalyzer():
         frame_height = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))  # Total number of frames
 
-        # Define the codec and create a VideoWriter object for saving the output
-        output_file_path = os.path.join(video_output_dir, f'{video_name}_processed.mp4')
-        out = cv2.VideoWriter(output_file_path,
+        # Define the codec and create VideoWriter objects for both outputs
+        output_file_original = os.path.join(video_output_dir, f'{video_name}_original_processed.mp4')
+        output_file_black_bg = os.path.join(video_output_dir, f'{video_name}_black_bg_processed.mp4')
+        
+        out_original = cv2.VideoWriter(output_file_original,
+                            cv2.VideoWriter_fourcc(*'mp4v'),  # Codec for mp4
+                            original_fps,  # Use original FPS
+                            (frame_width, frame_height))
+
+        out_black_bg = cv2.VideoWriter(output_file_black_bg,
                             cv2.VideoWriter_fourcc(*'mp4v'),  # Codec for mp4
                             original_fps,  # Use original FPS
                             (frame_width, frame_height))
@@ -121,6 +128,9 @@ class PosturalAnalyzer():
                 if not ret:
                     break  # No more frames
 
+                # Create a black background for the second video
+                black_background = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
+
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert frame to RGB for the inferencer
 
                 # Get hand landmarks
@@ -142,14 +152,23 @@ class PosturalAnalyzer():
                             row.append((None, None))  # Append (None, None) if keypoint is missing
 
                     writer.writerow(row)
-                    
+
+                    # Draw keypoints on the black background using circles
+                    for i, keypoint in enumerate(keypoints):
+                        x, y = int(keypoint[0]), int(keypoint[1])
+                        if x > 0 and y > 0:  # Valid keypoints (positive coordinates)
+                            cv2.circle(black_background, (x, y), 5, (0, 255, 0), -1)  # Green circles on black background
+
+                    # If return_vis is True, save visualizations to both videos
                     if return_vis:
                         vis = result['visualization'][0]
-                        visualisations.append(vis)
 
-                        # Convert the visualization back to BGR for saving
+                        # Original video with keypoints visualization
                         vis_bgr = cv2.cvtColor(vis, cv2.COLOR_RGB2BGR)
-                        out.write(vis_bgr)  # Write the frame to the output video
+                        out_original.write(vis_bgr)  # Write the frame to the original background video
+
+                        # Black background with keypoints drawn on it
+                        out_black_bg.write(black_background)
 
                     current_tremor_amplitudes = []
                     prev_landmarks, current_tremor_amplitudes = self.update_tremor_analysis(prev_landmarks, current_tremor_amplitudes)
@@ -163,7 +182,8 @@ class PosturalAnalyzer():
 
             # Cleanup after finishing the video processing
             video_capture.release()
-            out.release()
+            out_original.release()
+            out_black_bg.release()
 
         # plt.clf()  # Clear the plot
         time_taken = time.time() - start_time
@@ -171,14 +191,15 @@ class PosturalAnalyzer():
         print(f"Processed {frame_count}/{total_frames} frames")
         print(f"Time taken: {time_taken:.2f} seconds")
         print(f"Average time per frame: {time_taken / frame_count:.4f} seconds")
-        print(f"Processed video saved to {output_file_path}")
+        print(f"Processed videos saved to {output_file_original} and {output_file_black_bg}")
 
         print(f"Keypoints time series saved to {csv_output_path}")
         print(f"Tremor amplitudes saved to {tremor_csv_output_path}")
-        plot_path = os.path.join(output_dir,f'{self.inferencer_name}',os.path.basename(video_path).replace('.mp4', ''), os.path.basename(video_path).replace('.mp4', '_tremor_plot.png'))
-        self.plot_tremor_signal(tremor_amplitudes,plot_path )
+        plot_path = os.path.join(output_dir, f'{self.inferencer_name}', os.path.basename(video_path).replace('.mp4', ''), os.path.basename(video_path).replace('.mp4', '_tremor_plot.png'))
+        self.plot_tremor_signal(tremor_amplitudes, plot_path)
 
-        # return tremor_amplitudes
+        # return tremor_amplitude
+
     
     def update_tremor_analysis(self, prev_landmarks, current_tremor_amplitudes):
         """
