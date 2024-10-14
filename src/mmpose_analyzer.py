@@ -114,7 +114,7 @@ class PosturalAnalyzer():
             tremor_writer = csv.writer(tremor_csv_file)
             
             # Writing headers for keypoints and tremor amplitudes CSVs
-            keypoints_header = ['Frame'] + [self.body_parts[kp] for kp in self.body_parts.keys()]
+            keypoints_header = ['Frame'] + [f'{self.body_parts[kp]}_x' for kp in self.body_parts.keys()] + [f'{self.body_parts[kp]}_y' for kp in self.body_parts.keys()]
             writer.writerow(keypoints_header)
             tremor_writer.writerow(['Frame', 'Tremor_Amplitude'])
             
@@ -142,14 +142,16 @@ class PosturalAnalyzer():
                     keypoints = result['predictions'][0][0]['keypoints']  # Store landmarks
                     self.landmark_list.append(keypoints)  # Save the landmarks
 
-                    # Prepare row with frame number and keypoints as (x, y) tuples
+                    # Prepare row with frame number and keypoints as separate x and y coordinates
                     row = [frame_count]
                     for i in range(len(self.body_parts.keys())):
-                        # Check if the keypoint exists, otherwise append (None, None)
+                        # Check if the keypoint exists, otherwise append None for x and y
                         if i < len(keypoints):
-                            row.append(keypoints[i])  # Append (x, y) tuple
+                            row.append(keypoints[i][0])  # Append x coordinate
+                            row.append(keypoints[i][1])  # Append y coordinate
                         else:
-                            row.append((None, None))  # Append (None, None) if keypoint is missing
+                            row.append(None)  # Append None for x
+                            row.append(None)  # Append None for y
 
                     writer.writerow(row)
 
