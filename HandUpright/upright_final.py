@@ -67,8 +67,10 @@ os.makedirs(output_base, exist_ok=True)
 for subdir, dirs, files in os.walk(root_folder):
     if os.path.basename(subdir).upper() == "HAND_UPRIGHT":
         subname = os.path.basename(os.path.dirname(subdir))
-        output_csv = os.path.join(output_base, f"{subname}_day_before_upright.csv")
-
+        #output_csv = os.path.join(output_base, f"{subname}_day_before_upright.csv")
+        relative_path = os.path.relpath(subdir, root_folder)
+        clean_name = relative_path.replace(os.sep, "_")
+        output_csv = f"{clean_name}.csv"
         for file in files:
             if file.lower().endswith(SUPPORTED_EXTS):
                 video_path = os.path.join(subdir, file)
