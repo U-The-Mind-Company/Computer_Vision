@@ -69,9 +69,17 @@ for subdir, dirs, files in os.walk(root_folder):
         subname = os.path.basename(os.path.dirname(subdir))
         #output_csv = os.path.join(output_base, f"{subname}_day_before_upright.csv")
         relative_path = os.path.relpath(subdir, root_folder)
+
+        # Extract subject ID (assumed to be first folder name under root)
+        parts = relative_path.split(os.sep)
+        subject_id = parts[0] if len(parts) > 0 else "unknown_subject"
+
+        # Clean the relative path for filename
         clean_name = relative_path.replace(os.sep, "_")
-        output_csv = f"{clean_name}.csv"
+        output_name = f"{subject_id}_{clean_name}.csv"
+        output_csv = os.path.join(output_root, output_name)
         for file in files:
             if file.lower().endswith(SUPPORTED_EXTS):
                 video_path = os.path.join(subdir, file)
                 process_video(video_path, output_csv)
+
