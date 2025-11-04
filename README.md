@@ -58,6 +58,7 @@ To use mmpose as a dependency or third-party package, install it with pip:
 
 ```shell
 mim install "mmpose>=1.1.0"
+pip install mediapipe os csv opencv-python
 ```
 
 ---
