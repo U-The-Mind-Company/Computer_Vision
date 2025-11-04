@@ -99,8 +99,14 @@ for subdir, dirs, files in os.walk(root_folder):
     if os.path.basename(subdir) == "HAND_PALMHAND" or os.path.basename(subdir) == "HAND_PALMDOWN":
         # Build the hierarchical name based on parent folders
         relative_path = os.path.relpath(subdir, root_folder)
+
+        # Extract subject ID (assumed to be first folder name under root)
+        parts = relative_path.split(os.sep)
+        subject_id = parts[0] if len(parts) > 0 else "unknown_subject"
+
+        # Clean the relative path for filename
         clean_name = relative_path.replace(os.sep, "_")
-        output_name = f"{clean_name}.csv"
+        output_name = f"{subject_id}_{clean_name}.csv"
         output_csv = os.path.join(output_root, output_name)
 
         # Process all videos inside HAND_UPRIGHT
@@ -109,3 +115,4 @@ for subdir, dirs, files in os.walk(root_folder):
                 video_path = os.path.join(subdir, file)
                 print(f"🎥 Processing {video_path} ...")
                 process_video(video_path, output_csv)
+
