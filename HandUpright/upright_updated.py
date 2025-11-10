@@ -1,124 +1,151 @@
-# Changes made: 1. Changed the code to incorporate the structure of the manual_landmarks.csv 2. Changed Output_root to Output_base 3. Extended the Windows max_path limit so that the code can read the patient folder paths 
+# Changes made: 1. Changed the code to incorporate the structure of the manual_landmarks.csv 2. Changed Output_root to Output_folder (Naming consistency) 3. Extended the Windows max_path limit so that the code can read the patient folder paths 
 
-import cv2
-import mediapipe as mp
-import csv
 import os
-import numpy as np
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import cv2
+import pandas as pd
+import numpy as np
 
-manual_ref_csv = "manual_landmarks_palm.csv"  #replace with paths to the manual csv file
-output_root = "Processed_Upright_CSVs"
+# === Constants ===
+MANUAL_LANDMARKS_FILE = r"C:\Users\aaish\Tremor\HandUpright\manual_landmarks.csv"
+OUTPUT_FOLDER = "Processed_Upright_CSVs"
+SUPPORTED_EXTS = (".mp4", ".mov")
 
-def load_reference_landmarks(csv_path):
-    ref = {0: np.zeros((21, 2), dtype=np.float32), 1: np.zeros((21, 2), dtype=np.float32)}
-    with open(csv_path, "r") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            hand_id = int(row["hand_id"])
-            xs = np.array([float(row[f"x_{i}"]) for i in range(21)], dtype=np.float32)
-            ys = np.array([float(row[f"y_{i}"]) for i in range(21)], dtype=np.float32)
-            ref[hand_id] = np.column_stack((xs, ys))
-    return ref
+# === Windows long-path helper (for CSV output paths) ===
+def _win_long_path(p: str) -> str:
+    """
+    Return a Windows extended-length path (\\?\\...) if on Windows.
+    Only used for writing CSVs to avoid MAX_PATH (260) issues.
+    """
+    if os.name != "nt":
+        return p
+    if not p:
+        return p
 
+    # Normalize and absolute
+    p_abs = os.path.abspath(os.path.normpath(p))
 
-def process_video(video_path, output_csv, ref_landmarks):
-    mp_hands = mp.solutions.hands
+    # Already extended?
+    if p_abs.startswith("\\\\?\\"):
+        return p_abs
 
+    # UNC path: \\server\share\...  -> \\?\UNC\server\share\...
+    if p_abs.startswith("\\\\"):
+        return "\\\\?\\UNC" + p_abs[1:]
+
+    # Local path: C:\... -> \\?\C:\...
+    return "\\\\?\\" + p_abs
+
+# === Load reference landmarks ===
+if not os.path.exists(MANUAL_LANDMARKS_FILE):
+    print(f"Error: '{MANUAL_LANDMARKS_FILE}' not found.")
+    sys.exit(1)
+
+ref_landmarks = pd.read_csv(MANUAL_LANDMARKS_FILE)
+print(f"[INFO] Loaded manual reference landmarks from {MANUAL_LANDMARKS_FILE}")
+
+# Detect landmark columns (x_0..x_n, y_0..y_n) and prepare a per-hand cache
+x_cols = sorted(
+    [c for c in ref_landmarks.columns if str(c).startswith("x_")],
+    key=lambda s: int(str(s).split("_")[1])
+)
+y_cols = sorted(
+    [c for c in ref_landmarks.columns if str(c).startswith("y_")],
+    key=lambda s: int(str(s).split("_")[1])
+)
+
+if len(x_cols) == 0 or len(x_cols) != len(y_cols):
+    raise ValueError(f"Bad landmark columns. x_cols={x_cols}, y_cols={y_cols}")
+
+landmark_ids = [int(str(c).split("_")[1]) for c in x_cols]
+
+# Build a lookup: hand_id -> list[(landmark_id, x, y)]
+if "hand_id" not in ref_landmarks.columns:
+    raise ValueError("Expected a 'hand_id' column in the manual landmarks CSV.")
+
+landmarks_by_hand = {}
+for _, row in ref_landmarks.iterrows():
+    hid = int(row["hand_id"])
+    coords = []
+    for j in landmark_ids:
+        coords.append((j, float(row[f"x_{j}"]), float(row[f"y_{j}"])))
+    # If multiple rows per hand_id exist, the last row wins
+    landmarks_by_hand[hid] = coords
+
+# === Helper to process a video ===
+def process_video(video_path, output_csv_path):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"⚠️ Could not open {video_path}")
-        return video_path, False
+        print(f"[WARN] Cannot open video: {video_path}")
+        return
 
-    rows = []
+    video_name = os.path.basename(video_path)
+    results = []
     frame_idx = 0
 
-    gpu_available = cv2.cuda.getCudaEnabledDeviceCount() > 0
-    print(f"GPU available: {gpu_available}")
+    # Choose which hand’s landmarks to use
+    hand_id = 0  # change if you want hand 1, etc.
 
-    with mp_hands.Hands(
-        static_image_mode=False,
-        max_num_hands=2,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
-    ) as hands:
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+    if hand_id not in landmarks_by_hand:
+        # Fallback to first available hand in the CSV
+        first_hand = next(iter(landmarks_by_hand.keys()))
+        print(f"[WARN] hand_id={hand_id} not in manual landmarks. Using hand_id={first_hand} instead.")
+        hand_id = first_hand
 
-            if gpu_available:
-                gpu_frame = cv2.cuda_GpuMat()
-                gpu_frame.upload(frame)
-                gpu_rotated = cv2.cuda.rotate(gpu_frame, cv2.ROTATE_90_CLOCKWISE)
-                gpu_rgb = cv2.cuda.cvtColor(gpu_rotated, cv2.COLOR_BGR2RGB)
-                rgb = gpu_rgb.download()
-            else:
-                frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    coords = landmarks_by_hand[hand_id]  # list of (landmark_id, x, y)
 
-            h, w = rgb.shape[:2]
-            result = hands.process(rgb)
+    print(f"[INFO] Processing {video_name} ...")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-            frame_landmarks = {0: ref_landmarks[0], 1: ref_landmarks[1]}
+        # Reuse the same manual landmarks for every frame
+        for lm_id, x, y in coords:
+            results.append([frame_idx, hand_id, lm_id, x, y])
 
-            if result.multi_hand_landmarks and result.multi_handedness:
-                for hand_idx, hand_landmarks in enumerate(result.multi_hand_landmarks):
-                    label = result.multi_handedness[hand_idx].classification[0].label.lower()
-                    hand_id = 0 if label == "left" else 1
-                    coords = np.array(
-                        [(lm.x * w, lm.y * h) for lm in hand_landmarks.landmark],
-                        dtype=np.float32
-                    )
-                    frame_landmarks[hand_id] = coords
-
-            for hand_id in (0, 1):
-                coords = frame_landmarks[hand_id]
-                xs = np.round(coords[:, 0], 2).astype(str)
-                ys = np.round(coords[:, 1], 2).astype(str)
-                rows.append([frame_idx, hand_id, *xs, *ys])
-
-            frame_idx += 1
+        frame_idx += 1
 
     cap.release()
 
-    header = ["frame", "hand_id"] + [f"x_{i}" for i in range(21)] + [f"y_{i}" for i in range(21)]
-    with open(output_csv, "w", newline="") as f:
-        csv.writer(f).writerows([header, *rows])
+    df = pd.DataFrame(results, columns=['frame', 'hand_id', 'landmark_id', 'x', 'y'])
+
+    # Ensure directory exists (with long-path support)
+    out_dir = os.path.dirname(output_csv_path)
+    out_dir_lp = _win_long_path(out_dir)
+    os.makedirs(out_dir_lp, exist_ok=True)
+
+    # Write CSV using long-path
+    output_csv_path_lp = _win_long_path(output_csv_path)
+    df.to_csv(output_csv_path_lp, index=False)
+    print(f"[SAVED] {output_csv_path}")
 
     return video_path, True
 
+# === Main ===
+if len(sys.argv) < 2:
+    print("Usage: python process_upright.py <root_folder>")
+    sys.exit(1)
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python process_gpu_opencv.py <root_folder>")
-        sys.exit(1)
+root_folder = sys.argv[1]
+output_base = os.path.join(root_folder, OUTPUT_FOLDER)
+os.makedirs(_win_long_path(output_base), exist_ok=True)
 
-    root_folder = sys.argv[1]
-    os.makedirs(output_root, exist_ok=True)
-    ref_landmarks = load_reference_landmarks(manual_ref_csv)
+for subdir, dirs, files in os.walk(root_folder):
+    if os.path.basename(subdir).upper() == "HAND_UPRIGHT":
+        subname = os.path.basename(os.path.dirname(subdir))
+        relative_path = os.path.relpath(subdir, root_folder)
 
-    tasks = []
-    for subdir, _, files in os.walk(root_folder):
-        base = os.path.basename(subdir)
-        if base in ("HAND_PALMHAND", "HAND_PALMDOWN"):
-            relative_path = os.path.relpath(subdir, root_folder)
-            subject_id = relative_path.split(os.sep)[0] if relative_path else "unknown_subject"
-            clean_name = relative_path.replace(os.sep, "_")
-            output_name = f"{subject_id}_{clean_name}.csv"
-            output_csv = os.path.join(output_root, output_name)
-            for file in files:
-                if file.lower().endswith((".mp4", ".mov")):
-                    tasks.append((os.path.join(subdir, file), output_csv))
+        # Extract subject ID (assumed to be first folder name under root)
+        parts = relative_path.split(os.sep)
+        subject_id = parts[0] if len(parts) > 0 else "unknown_subject"
 
-    num_workers = min(max(1, os.cpu_count() - 1), 8)
-    print(f"🧠 Found {len(tasks)} videos. Using {num_workers} workers.")
+        # Clean the relative path for filename
+        clean_name = relative_path.replace(os.sep, "_")
+        output_name = f"{subject_id}_{clean_name}.csv"
+        output_csv = os.path.join(OUTPUT_FOLDER, output_name)
 
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = [executor.submit(process_video, v, c, ref_landmarks) for v, c in tasks]
-        for future in as_completed(futures):
-            video_path, success = future.result()
-            print(f"{'✅' if success else '❌'} {video_path}")
-
-    print("🏁 All processing complete!")
+        for file in files:
+            if file.lower().endswith(SUPPORTED_EXTS):
+                video_path = os.path.join(subdir, file)
+                process_video(video_path, output_csv)
