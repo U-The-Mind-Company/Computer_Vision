@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 
 # === Constants ===
-MANUAL_LANDMARKS_FILE = r"C:\Users\aaish\Tremor\HandUpright\manual_landmarks.csv"
+MANUAL_LANDMARKS_FILE = "manual_landmarks.csv"
 OUTPUT_FOLDER = "Processed_Upright_CSVs"
 SUPPORTED_EXTS = (".mp4", ".mov")
 
