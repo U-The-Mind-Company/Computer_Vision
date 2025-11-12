@@ -27,7 +27,6 @@ def calculate_tremor_amplitude(filepath):
         
         if not x_columns or not y_columns:
             print(f"Warning: No keypoint columns found in {filepath}")
-            print(f"  Available columns: {list(df.columns)[:10]}...")  # Show first 10 columns for debugging
             return None
         
         # Sort columns to ensure matching pairs (x_0 with y_0, etc.)
@@ -82,8 +81,6 @@ def calculate_tremor_amplitude(filepath):
         
     except Exception as e:
         print(f"Error processing {filepath}: {e}")
-        import traceback
-        traceback.print_exc()
         return None
 
 def plot_tremor_data(directory_path):
@@ -142,28 +139,16 @@ def plot_tremor_data(directory_path):
             x_values.append(day + 0.5)
             y_values.append(tremor_data[day]['after'])
     
-    # Create the plot with single continuous line
+    # Create the plot with single continuous line (ORIGINAL STYLE)
     plt.figure(figsize=(12, 6))
     
     plt.plot(x_values, y_values, 'o-', color='#3b82f6',
              markersize=6, linewidth=2)
     
-    # Add markers to distinguish before/after
-    before_x = [x for x in x_values if x == int(x)]
-    before_y = [y for x, y in zip(x_values, y_values) if x == int(x)]
-    after_x = [x for x in x_values if x != int(x)]
-    after_y = [y for x, y in zip(x_values, y_values) if x != int(x)]
-    
-    if before_x:
-        plt.scatter(before_x, before_y, color='green', s=100, label='Before', zorder=5)
-    if after_x:
-        plt.scatter(after_x, after_y, color='red', s=100, label='After', zorder=5)
-    
     plt.xlabel('Day', fontsize=12, fontweight='bold')
     plt.ylabel('Average Tremor Amplitude', fontsize=12, fontweight='bold')
     plt.title('Tremor Amplitude Over Treatment Period', fontsize=14, fontweight='bold')
     plt.grid(True, alpha=0.3)
-    plt.legend()
     
     # Set x-axis ticks to show all days
     if days:
@@ -186,36 +171,18 @@ def plot_tremor_data(directory_path):
         if isinstance(before, float) and isinstance(after, float):
             change = ((after - before) / before) * 100
             print(f"  Change: {change:+.1f}%")
-    
-    # Calculate overall treatment effect if we have both before and after data
-    before_values = [tremor_data[day]['before'] for day in days if 'before' in tremor_data[day]]
-    after_values = [tremor_data[day]['after'] for day in days if 'after' in tremor_data[day]]
-    
-    if before_values and after_values:
-        avg_before = np.mean(before_values)
-        avg_after = np.mean(after_values)
-        overall_change = ((avg_after - avg_before) / avg_before) * 100
-        print(f"\n=== Overall Treatment Effect ===")
-        print(f"Average Before: {avg_before:.2e}")
-        print(f"Average After:  {avg_after:.2e}")
-        print(f"Overall Change: {overall_change:+.1f}%")
 
 # Example usage
 if __name__ == "__main__":
-    print("Hand Tremor Analysis Program")
-    print("-" * 30)
-    
     # Dir Path
-    data_directory = input("\nEnter the path to your tremor data directory: ").strip()
+    data_directory = input("Enter the path to your tremor data directory: ").strip()
     
     # Remove quotes if user included them
     data_directory = data_directory.strip('"').strip("'")
     
     # Check if directory exists
     if not os.path.exists(data_directory):
-        print(f"\nError: Directory '{data_directory}' not found.")
+        print(f"Directory '{data_directory}' not found.")
         print("Please check the path and try again.")
     else:
-        print(f"\nProcessing files in: {data_directory}")
         plot_tremor_data(data_directory)
-        print("\nAnalysis complete! Check 'tremor_analysis.png' for the plot.")
