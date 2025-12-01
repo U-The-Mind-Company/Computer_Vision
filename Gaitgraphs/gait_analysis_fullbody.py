@@ -12,17 +12,27 @@ from scipy.stats import pearsonr
 from matplotlib.lines import Line2D
 
 # This function extracts the day number and before/after label from the filename
+# REPLACE the old extract_day_and_label with this improved version
 def extract_day_and_label(filename):
-    # Example filename: "Smith, John: Day12_Before.csv"
-    # We use a regular expression to find the day number and the label (Before or After)
-    match = re.search(r'Day(\d+)_?(Before|After)?', filename, re.IGNORECASE)
-    if match:
-        day = int(match.group(1))  # Get the number after 'Day'
-        label = match.group(2).capitalize() if match.group(2) else ""  # Get 'Before' or 'After'
-        return day, label
-    else:
-        # If the filename doesn't match the pattern, show an error
-        raise ValueError(f"Filename '{filename}' does not match expected pattern (should contain 'DayX_Before' or 'DayX_After').")
+    """
+    Extracts integer day and label ('Before'/'After' if present) from a filename.
+    Works for names like:
+      - "Day 1 (Gait and Resting Hands)_After Stimulation_WHOLE_BODY_IMG_3384.csv"
+      - "Day10_Before.csv"
+      - "day 11 videos_after_whole_body_vid_20250228_150101.csv"
+    Returns (day:int, label:str) where label is "" if not found.
+    """
+    # find day number: 'Day' optionally followed by spaces, then digits
+    day_match = re.search(r'\bDay\s*(\d+)\b', filename, re.IGNORECASE)
+    if not day_match:
+        raise ValueError(f"Filename '{filename}' does not contain a 'Day' followed by a number.")
+    day = int(day_match.group(1))
+
+    # find label anywhere: 'Before' or 'After' as whole words
+    label_match = re.search(r'\b(Before|After)\b', filename, re.IGNORECASE)
+    label = label_match.group(1).capitalize() if label_match else ""
+
+    return day, label
 
 # This function reads all CSV files in a folder, adds the extracted day and label, and combines them into one DataFrame
 def read_all_metrics_from_folder(folder_path):
@@ -448,7 +458,18 @@ def analyze_folder_fullbody(folder_path):
             df['Days'] = day  # Add the day as a new column
             df['Label'] = label  # Add the label as a new column
             df['SourceFile'] = fname  # Save the filename for reference
-            metrics = analyze_fullbody_gait(df)  # Calculate all gait metrics for this file
+            #metrics = analyze_fullbody_gait(df)
+            
+            try:
+                metrics = analyze_fullbody_gait(df)  
+            except ValueError as e:
+                # Skip files missing face markers
+                if "No head marker" in str(e):
+                    print(f"⚠️ Skipping file (no face marker found): {fname}")
+                    continue
+                else:
+                    raise e
+            # Calculate all gait metrics for this file
             metrics['Days'] = day  # Add the day to the metrics
             metrics['Label'] = label  # Add the label to the metrics
             metrics['SourceFile'] = fname  # Add the filename to the metrics
@@ -697,9 +718,9 @@ def plot_metrics_dashboard(df, save_dir=None):
 # ---- MAIN ----
 if __name__ == "__main__":
     # Set the path to your folder with gait metric CSV files
-    folder_path = r"C:\Before and After Data\Body Points"
+    folder_path = r"E:\WholeBody\outputs"
     # Set the folder where you want to save the dashboard plots
-    save_dir = r"C:\Before and After Data\gait_analysis_dashboard"
+    save_dir = r"E:\WholeBody"
     # Run full body analysis for all files in the folder
     summary_df = analyze_folder_fullbody(folder_path)
     # Save the summary as a CSV file
